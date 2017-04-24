@@ -2,7 +2,7 @@
 *.o
 *.a
 *.so
-
+mlt
 # Folders
 _obj
 _test
