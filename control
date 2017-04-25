@@ -1,11 +1,19 @@
 #!/bin/bash
+
+if [ -e ~/.bashrc ];then
+    source ~/.bashrc
+fi
+
 workspace=$(cd $(dirname $0) && pwd)
 cd $workspace
 
 module=server
 app=mlt-$module
+logdir=log
+ip="10.134.11.83"
+port=18080
 pidfile=var/app.pid
-logfile=var/app.log
+logfile=$logdir/$app.log
 
 mkdir -p var &>/dev/null
 
@@ -13,13 +21,13 @@ mkdir -p var &>/dev/null
 ## build & pack
 function build() {
     commit=$(git log -1 --pretty=%h)
-    cat <<EOF > ./g/git.go
-package g
-const (
-    COMMIT = "$commit"
-)
-EOF
-    go build -o $app main.go
+#    cat <<EOF > ./g/git.go
+#package g
+#const (
+#    COMMIT = "$commit"
+#)
+#EOF
+    go build -o $app
     sc=$?
     if [ $sc -ne 0 ];then
         echo "build error"
@@ -34,7 +42,7 @@ function pack() {
     build
     git log -1 --pretty=%h > gitversion
     version=`./$app -v`
-    tar zcvf $app-$version.tar.gz control $app conf gitversion
+    tar zcvf $app-$version.tar.gz control $app cronolog conf/ gitversion
     rm -f gitversion &>/dev/null
 }
 
@@ -56,9 +64,21 @@ function start() {
         return 1
     fi
 
-    nohup ./$app  -addr=$ip -debug=1 -port=$port >>$logfile 2>&1 &
-    echo $! > $pidfile
-    echo "start ok, pid=$!"
+    nohup ./${app} -addr=$ip -debug=1 -port=$port 2>&1 | ./cronolog -p 30days -l "$logdir/$app.log" "$workspace/$logdir/$app.%Y-%m-%d" 2>&1 &
+    cd $workspace
+    if pgrep -f "(^|/)${app}($| ).*${ip}.*{$port}" > $pidfile;then
+        check_pid
+        running=$?
+        if [ $running -gt 0 ];then
+            echo "start ok, pid=$!"
+        else
+            echo "start failed, pid=$!"
+            rm -f $pidfile
+        fi
+    else
+        echo "start failed, pid=$!"
+        rm -f $pidfile
+    fi
 }
 
 function stop() {

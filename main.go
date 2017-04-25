@@ -5,13 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	elastic "gopkg.in/olivere/elastic.v5"
+	"github.com/astaxie/beego"
+	"github.com/lokicui/mlt/g"
 	"github.com/wangbin/jiebago/posseg"
 	"golang.org/x/net/context"
+	elastic "gopkg.in/olivere/elastic.v5"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -26,6 +27,7 @@ var gLog *log.Logger = nil
 var gAddr = flag.String("addr", "0.0.0.0", "Specify local addr for remote connects")
 var gPort = flag.Int("port", 8080, "Specify local port for remote connects")
 var gDebug = flag.Int("debug", 0, "debug level, 1 for debug")
+var gVersion = flag.Bool("v", false, "show version")
 var gSeg posseg.Segmenter
 
 func init() {
@@ -40,9 +42,9 @@ func init() {
 	}
 }
 
-func GetHitData(query, uuid string) (hintArray []string) {
+func GetHitData(query, UUID string) (hintArray []string) {
 	url := fmt.Sprintf("http://hint.wenwen.sogou.com/web?uuid=%s&ie=utf8&callback=hintdata&src=wenwen.xgzs&query=%s",
-		uuid,
+		UUID,
 		query)
 	resp, err := http.Get(url)
 	if err != nil {
@@ -88,7 +90,9 @@ func getMustQueryWords(wordItems []WordInfo) (words []string) {
 	return words
 }
 
-func MoreLikeThisQuery(query, uuid, preference string, start, limit, typev int, client *elastic.Client) (result []interface{}, total int64, err error) {
+func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []interface{}, total int64, err error) {
+	query := request.Query
+	UUID := request.UUID
 	stime := time.Now()
 	atomic.AddUint64(&gCnt, 1)
 	//opsFinal := atomic.LoadUint64(&gCnt)
@@ -97,14 +101,14 @@ func MoreLikeThisQuery(query, uuid, preference string, start, limit, typev int, 
 	//		time.Now(), opsFinal,
 	//		float64(opsFinal)/float64(time.Since(gStime))*float64(time.Second))
 	//}
-	hintArray := GetHitData(query, uuid)
+	hintArray := GetHitData(query, UUID)
 	qItems, err := SegmentQuery(query, false)
 	if err != nil {
-		gLog.Printf("uuid=%s,query=%s SegmentQuery failed with:%s\n", uuid, query, err)
+		gLog.Printf("uuid=%s,query=%s SegmentQuery failed with:%s\n", UUID, query, err)
 		return
 	}
 	if len(qItems) == 0 {
-		gLog.Printf("uuid=%s,query=%s SegmentQuery failed with len(qItems)=0\n", uuid, query)
+		gLog.Printf("uuid=%s,query=%s SegmentQuery failed with len(qItems)=0\n", UUID, query)
 		return
 	}
 	_ = time.Since(stime)
@@ -193,6 +197,11 @@ func MoreLikeThisQuery(query, uuid, preference string, start, limit, typev int, 
 	sort.Slice(sortedWords, func(i, j int) bool {
 		return sortedWords[i].Term_NImps > sortedWords[j].Term_NImps
 	})
+	if *gDebug == 1 {
+		for i, item := range sortedWords {
+			fmt.Printf("%d %#v %d\n", i, item.Word, item.Term_NImps)
+		}
+	}
 	importantKwds := ""
 	if len(queryWords) > 5 {
 		for _, item := range lcss2WeightArray {
@@ -216,7 +225,7 @@ func MoreLikeThisQuery(query, uuid, preference string, start, limit, typev int, 
 	doctypes := make([]interface{}, 0, 3)
 	indextypes := make([]string, 0, 2)
 	for i := 0; i < 4; i++ {
-		if (typev & (1 << uint(i))) > 0 {
+		if (request.Typev & (1 << uint(i))) > 0 {
 			if i < 3 {
 				docType := i + 1
 				doctypes = append(doctypes, docType)
@@ -262,6 +271,13 @@ func MoreLikeThisQuery(query, uuid, preference string, start, limit, typev int, 
 		boolQuery = boolQuery.Must(matchQuery)
 	}
 
+	for i, id := range request.Tids {
+		if i == 1 {
+			break
+		}
+		termQuery := elastic.NewTermQuery("tags", id).Boost(2.0)
+		boolQuery = boolQuery.Should(termQuery)
+	}
 	//命中实体词的认为实体词是核心词, 必须全命中在这里强制
 	//for item := range gSeg.Cut(query, false) {
 	//    text := item.Text()
@@ -281,9 +297,9 @@ func MoreLikeThisQuery(query, uuid, preference string, start, limit, typev int, 
 	res, err := client.Search().
 		Index("luedongshe").
 		Type(indextypes...).
-		From(start).
-		Size(limit).
-		Preference(preference).
+		From(request.Start).
+		Size(request.Limit).
+		Preference(request.Preference).
 		Query(boolQuery).
 		FetchSourceContext(fs).
 		Timeout("150ms").
@@ -323,17 +339,90 @@ func MoreLikeThisQuery(query, uuid, preference string, start, limit, typev int, 
 	return
 }
 
+func genRequest(r *http.Request) (request *MltRequest, retcode int, err error) {
+	request = NewMltRequest()
+	r.ParseForm()
+	m := r.Form
+	if value, ok := m["uuid"]; ok && len(value) > 0 {
+		request.UUID = value[0]
+	} else {
+		retcode = 1
+		errmsg := fmt.Sprintf("argument error failed with:%s", "no uuid arg")
+		gLog.Printf("%s\n", errmsg)
+		err = errors.New(errmsg)
+		return
+	}
+	if value, ok := m["pretty"]; ok && len(value) > 0 {
+		if value[0] != "false" && value[0] != "0" {
+			request.Pretty = true
+		}
+	}
+	if value, ok := m["start"]; ok && len(value) > 0 {
+		v, err := strconv.Atoi(value[0])
+		if err == nil {
+			request.Start = v
+		}
+	}
+	if value, ok := m["limit"]; ok && len(value) > 0 {
+		v, err := strconv.Atoi(value[0])
+		if err == nil {
+			request.Limit = v
+		}
+	}
+	if value, ok := m["type"]; ok && len(value) > 0 {
+		request.Typev, err = strconv.Atoi(value[0])
+		if err != nil || request.Typev == 0 {
+			retcode = 1
+			errmsg := fmt.Sprintf("argument error failed with:%s", "type arg illegal or equals to zero")
+			gLog.Printf("uuid:%s, %s\n", request.UUID, errmsg)
+			err = errors.New(errmsg)
+			return
+		}
+	} else {
+		retcode = 1
+		errmsg := fmt.Sprintf("argument error failed with:%s", "no type arg")
+		gLog.Printf("uuid:%s, %s\n", request.UUID, errmsg)
+		err = errors.New(errmsg)
+		return
+	}
+	if value, ok := m["preference"]; ok && len(value) > 0 {
+		request.Preference = value[0]
+	} else {
+		retcode = 1
+		errmsg := fmt.Sprintf("argument error failed with:%s", "no preference arg")
+		gLog.Printf("uuid:%s, %s\n", request.UUID, errmsg)
+		err = errors.New(errmsg)
+		return
+	}
+	//tids=tag ids, 打算用tagid召回一部分内容
+	if value, ok := m["tids"]; ok && len(value) > 0 {
+		tidsstr := strings.Split(value[0], ",")
+		for _, tidstr := range tidsstr {
+			v, err := strconv.Atoi(tidstr)
+			if err == nil {
+				request.Tids = append(request.Tids, v)
+			}
+		}
+		sort.Sort(sort.IntSlice(request.Tids))
+	}
+
+	if value, ok := m["query"]; ok && len(value) > 0 {
+		request.Query = value[0]
+	} else {
+		retcode = 1
+		errmsg := fmt.Sprintf("argument error failed with:%s", "no query arg")
+		gLog.Printf("uuid:%s, %s\n", request.UUID, errmsg)
+		err = errors.New(errmsg)
+		return
+	}
+	return
+}
+
 func jsonHandler(w http.ResponseWriter, r *http.Request, client *elastic.Client) {
 	stime := time.Now()
+	request := NewMltRequest()
 	retcode := 0
-	typev := 0
-	uuid := "default_uuid"
-	query := ""
-	preference := ""
-	pretty := false
 	result := []interface{}{}
-	start := 0
-	limit := 15
 	var total int64 = 0
 	var err error = nil
 	defer func() {
@@ -343,102 +432,35 @@ func jsonHandler(w http.ResponseWriter, r *http.Request, client *elastic.Client)
 		}
 		took := float64(time.Since(stime)) / float64(time.Second)
 		vmap := make(map[string]interface{})
+		vmap["rawreq"] = r.URL
 		vmap["retcode"] = retcode
-		vmap["uuid"] = uuid
+		vmap["request"] = request
 		vmap["took"] = took
 		vmap["errmsg"] = errmsg
-		vmap["query"] = query
 		vmap["data"] = result
-		vmap["type"] = typev
-		vmap["start"] = start
-		vmap["limit"] = limit
 		vmap["total"] = total
 		vmap["retnum"] = len(result)
 		vjson := []byte{'{', '}'}
-		if pretty {
+		if request.Pretty {
 			vjson, _ = json.MarshalIndent(vmap, "", "    ")
 		} else {
 			vjson, _ = json.Marshal(vmap)
 		}
 		fmt.Fprintf(w, "%s", vjson)
-		vmap["req"] = r.URL
 		delete(vmap, "data")
 		logjson, _ := json.Marshal(vmap)
 		gLog.Printf("%s", logjson)
 	}()
-	m, err := url.ParseQuery(r.URL.RawQuery)
+	request, retcode, err = genRequest(r)
 	if err != nil {
-		retcode = 2
-		errmsg := fmt.Sprintf("parse query failed with:%s", err)
-		gLog.Printf("uuid:%s, %s\n", uuid, errmsg)
-		err = errors.New(errmsg)
+		retcode = 1
 		return
 	}
-	if value, ok := m["pretty"]; ok && len(value) > 0 {
-		if value[0] != "false" && value[0] != "0" {
-			pretty = true
-		}
-	}
-	if value, ok := m["start"]; ok && len(value) > 0 {
-		v, err := strconv.Atoi(value[0])
-		if err == nil {
-			start = v
-		}
-	}
-	if value, ok := m["limit"]; ok && len(value) > 0 {
-		v, err := strconv.Atoi(value[0])
-		if err == nil {
-			limit = v
-		}
-	}
-	if value, ok := m["type"]; ok && len(value) > 0 {
-		typev, err = strconv.Atoi(value[0])
-		if err != nil || typev == 0 {
-			retcode = 1
-			errmsg := fmt.Sprintf("argument error failed with:%s", "type arg illegal or equals to zero")
-			gLog.Printf("uuid:%s, %s\n", uuid, errmsg)
-			err = errors.New(errmsg)
-			return
-		}
-	} else {
-		retcode = 1
-		errmsg := fmt.Sprintf("argument error failed with:%s", "no type arg")
-		gLog.Printf("uuid:%s, %s\n", uuid, errmsg)
-		err = errors.New(errmsg)
-		return
-	}
-	if value, ok := m["uuid"]; ok && len(value) > 0 {
-		uuid = value[0]
-	} else {
-		retcode = 1
-		errmsg := fmt.Sprintf("argument error failed with:%s", "no uuid arg")
-		gLog.Printf("uuid:%s, %s\n", uuid, errmsg)
-		err = errors.New(errmsg)
-		return
-	}
-	if value, ok := m["preference"]; ok && len(value) > 0 {
-		preference = value[0]
-	} else {
-		retcode = 1
-		errmsg := fmt.Sprintf("argument error failed with:%s", "no preference arg")
-		gLog.Printf("uuid:%s, %s\n", uuid, errmsg)
-		err = errors.New(errmsg)
-		return
-	}
-	if value, ok := m["query"]; ok && len(value) > 0 {
-		query = value[0]
-		result, total, err = MoreLikeThisQuery(query, uuid, preference, start, limit, typev, client)
-		if err != nil {
-			retcode = 3
-			errmsg := fmt.Sprintf("more_like_this query failed with:%s", err)
-			gLog.Printf("uuid:%s, %s\n", uuid, errmsg)
-			err = errors.New(errmsg)
-			return
-		}
-	} else {
-		retcode = 1
-		errmsg := fmt.Sprintf("argument error failed with:%s", "no query arg")
-		gLog.Printf("uuid:%s, %s\n", uuid, errmsg)
+	result, total, err = MoreLikeThisQuery(request, client)
+	if err != nil {
+		retcode = 3
+		errmsg := fmt.Sprintf("more_like_this query failed with:%s", err)
+		gLog.Printf("uuid:%s, %s\n", request.UUID, errmsg)
 		err = errors.New(errmsg)
 		return
 	}
@@ -456,11 +478,29 @@ func makeHandler(fn func(http.ResponseWriter, *http.Request, *elastic.Client)) h
 	}
 }
 
+//func main() {
+//	// Create a client and connect to http://192.168.2.10:9201
+//	//client, err := elastic.NewClient(elastic.SetURL("http://10.134.29.127:9200", "http://10.134.53.116:9200", "http://10.134.96.106:9200"))
+//	//client, err := elastic.NewClient(elastic.SetURL("http://10.134.96.50:9200", "http://10.134.96.51:9200", "http://10.134.96.52:9200"))
+//	flag.Parse()
+//	if *gVersion {
+//		fmt.Println(g.VERSION)
+//		os.Exit(0)
+//	}
+//	http.HandleFunc("/json/", makeHandler(jsonHandler))
+//	err := http.ListenAndServe(*gAddr+":"+fmt.Sprintf("%d", *gPort), nil)
+//	if err != nil {
+//		gLog.Fatal(err)
+//	}
+//	gLog.Printf("%s finish req\n", time.Now())
+//}
+
 func main() {
-	// Create a client and connect to http://192.168.2.10:9201
-	//client, err := elastic.NewClient(elastic.SetURL("http://10.134.29.127:9200", "http://10.134.53.116:9200", "http://10.134.96.106:9200"))
-	//client, err := elastic.NewClient(elastic.SetURL("http://10.134.96.50:9200", "http://10.134.96.51:9200", "http://10.134.96.52:9200"))
 	flag.Parse()
+	if *gVersion {
+		fmt.Println(g.VERSION)
+		os.Exit(0)
+	}
 	http.HandleFunc("/json/", makeHandler(jsonHandler))
 	err := http.ListenAndServe(*gAddr+":"+fmt.Sprintf("%d", *gPort), nil)
 	if err != nil {
