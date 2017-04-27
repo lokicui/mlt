@@ -4,14 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/astaxie/beego/logs"
 	"github.com/lokicui/mlt/utils"
-    "github.com/astaxie/beego/logs"
+    "github.com/lokicui/mlt/http/morelikethis/taginfo"
 	"github.com/wangbin/jiebago/posseg"
 	"golang.org/x/net/context"
 	elastic "gopkg.in/olivere/elastic.v5"
 	"io/ioutil"
 	"net/http"
-    "net/url"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 )
 
 var gSeg posseg.Segmenter
+var gESClient *elastic.Client = nil
 
 func init() {
 	err := gSeg.LoadDictionary("conf/dict.txt")
@@ -29,6 +31,11 @@ func init() {
 	if err != nil {
 		logs.Critical(err)
 	}
+	gESClient, err = elastic.NewClient(elastic.SetURL("http://10.134.13.99:9200", "http://10.134.14.27:9200", "http://10.134.28.85:9200"))
+	if err != nil {
+		logs.Critical(err)
+	}
+    taginfo.Init("conf/db_taginfo.txt")
 }
 
 func GetHitData(query, UUID string) (hintArray []string) {
@@ -321,7 +328,77 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	return
 }
 
-func GenRequest(m url.Values) (request *MltRequest, retcode int, err error) {
+func GenGetByTidRequest(m url.Values) (request *GetByTidRequest, retcode int, err error) {
+	request = NewGetByTidRequest()
+	if value, ok := m["uuid"]; ok && len(value) > 0 {
+		request.UUID = value[0]
+	} else {
+		retcode = 1
+		errmsg := fmt.Sprintf("argument error failed with:%s", "no uuid arg")
+		logs.Debug(errmsg)
+		err = errors.New(errmsg)
+		return
+	}
+	if value, ok := m["pretty"]; ok && len(value) > 0 {
+		if value[0] != "false" && value[0] != "0" {
+			request.Pretty = true
+		}
+	}
+	if value, ok := m["debug"]; ok && len(value) > 0 {
+		if value[0] != "false" && value[0] != "0" {
+			request.Debug = true
+		}
+	}
+	if value, ok := m["start"]; ok && len(value) > 0 {
+		v, err := strconv.Atoi(value[0])
+		if err == nil {
+			request.Start = v
+		}
+	}
+	if value, ok := m["limit"]; ok && len(value) > 0 {
+		v, err := strconv.Atoi(value[0])
+		if err == nil {
+			request.Limit = v
+		}
+	}
+	if value, ok := m["type"]; ok && len(value) > 0 {
+		request.Type, err = strconv.Atoi(value[0])
+		if err != nil || request.Type == 0 {
+			retcode = 1
+			errmsg := fmt.Sprintf("argument error failed with:%s", "type arg illegal or equals to zero")
+			logs.Debug(fmt.Printf("uuid:%s, %s", request.UUID, errmsg))
+			err = errors.New(errmsg)
+			return
+		}
+	} else {
+		retcode = 1
+		errmsg := fmt.Sprintf("argument error failed with:%s", "no type arg")
+		logs.Debug(fmt.Printf("uuid:%s, %s", request.UUID, errmsg))
+		err = errors.New(errmsg)
+		return
+	}
+	if value, ok := m["preference"]; ok && len(value) > 0 {
+		request.Preference = value[0]
+	} else {
+		retcode = 1
+		errmsg := fmt.Sprintf("argument error failed with:%s", "no preference arg")
+		logs.Debug(fmt.Printf("uuid:%s, %s", request.UUID, errmsg))
+		err = errors.New(errmsg)
+		return
+	}
+	if value, ok := m["tid"]; ok && len(value) > 0 {
+		request.Tid= value[0]
+	} else {
+		retcode = 1
+		errmsg := fmt.Sprintf("argument error failed with:%s", "no Tid arg")
+		logs.Debug(fmt.Printf("uuid:%s, %s", request.UUID, errmsg))
+		err = errors.New(errmsg)
+		return
+	}
+	return
+}
+
+func GenMltRequest(m url.Values) (request *MltRequest, retcode int, err error) {
 	request = NewMltRequest()
 	if value, ok := m["uuid"]; ok && len(value) > 0 {
 		request.UUID = value[0]
@@ -381,7 +458,7 @@ func GenRequest(m url.Values) (request *MltRequest, retcode int, err error) {
 	}
 	//tids=tag ids, 打算用tagid召回一部分内容
 	if value, ok := m["tids"]; ok && len(value) > 0 {
-        request.Tids = value[0]
+		request.Tids = value[0]
 		tidsstr := strings.Split(request.Tids, ",")
 		for _, tidstr := range tidsstr {
 			v, err := strconv.Atoi(tidstr)
@@ -438,7 +515,7 @@ func moreLikeThisHandler(w http.ResponseWriter, r *http.Request, client *elastic
 		logs.Debug(string(logjson))
 	}()
 	r.ParseForm()
-	request, retcode, err = GenRequest(r.Form)
+	request, retcode, err = GenMltRequest(r.Form)
 	if err != nil {
 		retcode = 1
 		return
@@ -454,24 +531,96 @@ func moreLikeThisHandler(w http.ResponseWriter, r *http.Request, client *elastic
 }
 
 func GetMoreLikeThisResult(request *MltRequest) (result []interface{}) {
-	client, err := elastic.NewClient(elastic.SetURL("http://10.134.13.99:9200", "http://10.134.14.27:9200", "http://10.134.28.85:9200"))
-	if err != nil {
-		logs.Critical(err)
+	result, _, _ = MoreLikeThisQuery(request, gESClient)
+	return result
+}
+
+func GetByTidResult(request *GetByTidRequest) (result []interface{}) {
+	doctypes := make([]interface{}, 0, 3)
+	indextypes := make([]string, 0, 2)
+	for i := 0; i < 4; i++ {
+		if (request.Type & (1 << uint(i))) > 0 {
+			if i < 3 {
+				docType := i + 1
+				doctypes = append(doctypes, docType)
+				if len(indextypes) == 0 {
+					indextypes = append(indextypes, "question")
+				}
+			}
+			if i == 3 {
+				indextypes = append(indextypes, "article")
+			}
+		}
 	}
-    result, _, err = MoreLikeThisQuery(request, client)
-    return result
+
+	mustQuery := elastic.NewBoolQuery().MinimumNumberShouldMatch(1)
+	mustQuery = mustQuery.Should(elastic.NewTermsQuery("type", doctypes...))
+	mustQuery = mustQuery.Should(elastic.NewTermQuery("_type", "article"))
+	boolQuery := elastic.NewBoolQuery()
+	boolQuery = boolQuery.Must(elastic.NewTermQuery("status", 2))
+	boolQuery = boolQuery.Must(elastic.NewTermQuery("tags", request.Tid))
+	boolQuery = boolQuery.Must(mustQuery)
+
+	if request.Debug {
+		DebugQueryDSL(boolQuery)
+	}
+	//fmt.Println(indextypes, doctypes)
+	//fs := elastic.NewFetchSourceContext(true).Include("title", "id")
+	fs := elastic.NewFetchSourceContext(true)
+	res, err := gESClient.Search().
+		Index("luedongshe").
+		Type(indextypes...).
+		From(request.Start).
+		Size(request.Limit).
+		Preference(request.Preference).
+		Query(boolQuery).
+		FetchSourceContext(fs).
+		Timeout("150ms").
+		Pretty(false).
+		Do(context.TODO())
+	if err != nil {
+		logs.Debug(fmt.Printf("client.search err with:%s", err))
+		return
+	}
+	if res.Hits == nil {
+		logs.Debug("expected SearchResult.Hits != nil; got nil")
+		return
+	}
+	//res.TotalHits()
+    total := res.TotalHits()
+	//if res.Hits.TotalHits == 0
+	if total == 0 {
+		logs.Debug("expected SearchResult.Hits.TotalHits > %d; got 0")
+		return
+	}
+	result = make([]interface{}, 0, len(res.Hits.Hits))
+	for _, hit := range res.Hits.Hits {
+		matchItem := make(map[string]interface{})
+		matchItem["_index"] = hit.Index
+		matchItem["_type"] = hit.Type
+		matchItem["_id"] = hit.Id
+		matchItem["_score"] = hit.Score
+		item := make(map[string]interface{})
+		err := json.Unmarshal(*hit.Source, &item)
+		if err != nil {
+			logs.Debug(fmt.Printf("json unmarshal failed with:%s", err))
+			continue
+		}
+		matchItem["_source"] = item
+		result = append(result, matchItem)
+	}
+	return
 }
 
 func MakeHandler(fn func(http.ResponseWriter, *http.Request, *elastic.Client)) http.HandlerFunc {
 	//10.134.13.99
-	client, err := elastic.NewClient(elastic.SetURL("http://10.134.13.99:9200", "http://10.134.14.27:9200", "http://10.134.28.85:9200"))
-	if err != nil {
-		// Handle error
-		//panic(err)
-		logs.Critical(err)
-	}
+	//client, err := elastic.NewClient(elastic.SetURL("http://10.134.13.99:9200", "http://10.134.14.27:9200", "http://10.134.28.85:9200"))
+	//if err != nil {
+	//	// Handle error
+	//	//panic(err)
+	//	logs.Critical(err)
+	//}
 	return func(w http.ResponseWriter, r *http.Request) {
-		moreLikeThisHandler(w, r, client)
+		moreLikeThisHandler(w, r, gESClient)
 	}
 }
-

@@ -30,3 +30,27 @@ func NewMltRequest() *MltRequest {
     }
     return self
 }
+
+type GetByTidRequest struct {
+    Tid         string      `form:"tid"` //tagid
+    UUID        string      `form:"-"`//uuid
+    Preference  string      `form:"-"`//请求路由值
+    Start       int         `form:"-"`
+    Limit       int         `form:"-"`
+    Type        int         `form:"type"`//需要什么类型的返回数据 1:问题 2
+    Pretty      bool        `form:"-"`
+    Debug       bool        `form:"debug"`
+}
+func NewGetByTidRequest() * GetByTidRequest {
+    self := &GetByTidRequest {
+        Tid: "",
+        UUID:       "default_uuid",
+        Preference: "default_preference",
+        Start:      0,
+        Limit:      15,
+        Type:      0,
+        Pretty:     false,
+        Debug:      false,
+    }
+    return self
+}

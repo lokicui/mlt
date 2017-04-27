@@ -4,46 +4,75 @@
 <img src="/static/img/logo.png" width="30" height="30" align="left">
 <h3 class="font-bold">略懂社相关推荐数据召回服务</h3>
 </header>
-
-<hr>
-<div style="margin: 0 auto; max-width: 50%;">
-    <div class="panel-body">
-        <div class="form-sign" role="form">
-            <form action="" method="get">
-                <div class="form-group">
-                    检索词:<input type="text" placeholder="检索词" id="query" name="query" value="{{str2html .Form.Query}}"
-                    class="form-control" required autofocus />
+<body>
+    <div class="container">
+        <form action="" method="get">
+            <div class="form-group">
+                <label for="text">检索词:</label>
+                <input type="text" placeholder="检索词" id="query" name="query" value="{{str2html .Form.Query}}"
+                class="form-control" required autofocus />
+            </div>
+            <div class="form-group">
+                <label for="text">数据类型:</label>
+                <input type="text" placeholder="" id="type" name="type" value="{{.Form.Type}}"
+                class="form-control" required autofocus />
+            </div>
+            <div class="form-group">
+                <label for="text">标签ID,多个请用逗号分割:</label>
+                <input type="text" placeholder="" id="tids" name="tids" value="{{str2html .Form.Tids}}"
+                class="form-control" required autofocus />
+            </div>
+            <div class="checkbox">
+                <label><input type="checkbox" name="debug" id="debug" {{if .Form.Debug}}checked="checked"{{end}}>是否调试</label>
+            </div>
+            <hr>
+            <div class="form-group">
+                <button class="btn btn-primary" type="submit">检索</button>
+            </div>
+            <input type="hidden" name="uuid" value="uuid_dashboard_self">
+            <input type="hidden" name="preference" value="preference_dashboard_self">
+        </form>
+    </div>
+    <div class="container">
+        <h3>召回结果:</h3>
+        <div class="panel-group">
+            <ol>
+            {{range $key, $val := .L}}
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <a href="/?query={{$val._source.title}}&tids={{range $idx,$tid := $val._source.tags}}{{$tid}},{{end}}&type={{$.Form.Type}}&debug={{$.Form.Debug}}&uuid={{$.Form.UUID}}&preference={{$.Form.Preference}}" target="_blank"><h4><li>{{$val._source.title}}</li></h4></a>
                 </div>
-                <div class="form-group">
-                    数据类型:<input type="text" placeholder="" id="type" name="type" value="{{.Form.Type}}"
-                    class="form-control" required autofocus />
+                <div class="panel-body">
+                    <p>
+                    id:
+                    {{if eq $val._type "article"}}
+                    <a href="http://ld.sogou.com/article?aid={{$val._id}}" target="_blank">{{$val._id}}</a>
+                    ,类型:
+                    <code>文章</code>
+                    {{else}}
+                    <a href="http://ld.sogou.com/question?qid={{$val._id}}" target="_blank">{{$val._id}}</a>
+                    ,类型:
+                    <code>
+                        {{if le $val._source.type 1.0}}
+                        问题
+                        {{else if le $val._source.type 2.0}}
+                        PK
+                        {{else if le $val._source.type 3.0}}
+                        投票
+                        {{end}}
+                    </code>
+                    {{end}}
+                    ,标签:
+                        {{range $idx, $tid := $val._source.tags}}
+                        {{if gt $idx 0}},{{end}}
+                        <a href="getbytid?tid={{$tid}}&type={{$.Form.Type}}&debug={{$.Form.Debug}}&uuid={{$.Form.UUID}}&preference={{$.Form.Preference}}" target="_blank">{{$tid}}:{{print $tid | id2name}}</a>
+                        {{end}}
+                    </p>
                 </div>
-                <div class="form-group">
-                    标签:<input type="text" placeholder="" id="tids" name="tids" value="{{str2html .Form.Tids}}"
-                    class="form-control" required autofocus />
-                </div>
-                <div class="form-group">
-                    是否调试:<input type="text" placeholder="" id="debug" name="debug" value="{{.Form.Debug}}"
-                    class="form-control" required autofocus />
-                </div>
-                <button class="btn btn-default btn-block" type="submit" id="sign">检索</button>
-                <input type="hidden" name="uuid" value="uuid_dashboard_self">
-                <input type="hidden" name="preference" value="preference_dashboard_self">
-            </form>
+            </div>
+            {{end}}
+        </ol>
         </div>
     </div>
-<div>
-<hr>
-        <div class="panel-body">
-            <table border=1>
-                <tr><th>###</th><th>ID</th><th>标题</th></tr>
-                {{range $key, $val := .L}}
-                <tr>
-                    <td>{{$key}}</td>
-                    <td>{{$val._id}}</td>
-                    <td>{{$val._source.title}}</td>
-                </tr>
-                {{end}}
-            </table>
-        </div>
+</body>
 {{template "layout/foot.html" .}}

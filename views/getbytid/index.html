@@ -1,0 +1,73 @@
+{{template "layout/head.html" .}}
+
+<header class="text-center" style="margin-top:20px;">
+<img src="/static/img/logo.png" width="30" height="30" align="left">
+<h3 class="font-bold">略懂社相关推荐数据召回服务</h3>
+</header>
+<body>
+    <div class="container">
+        <form class="form-horizontal" method="get">
+            <div class="form-group">
+                <label for="text">检索标签ID:</label>
+                <input type="text" placeholder="标签id" id="tid" name="tid" value="{{.Form.Tid}}"
+                class="form-control" required autofocus />
+            </div>
+            <div class="form-group">
+                <label for="text">数据类型:</label>
+                <input type="text" placeholder="" id="type" name="type" value="{{.Form.Type}}"
+                class="form-control" required autofocus />
+            </div>
+            <div class="checkbox">
+                <label><input type="checkbox" name="debug" id="debug" {{if .Form.Debug}}checked="checked"{{end}}>是否调试</label>
+            </div>
+            <hr>
+            <div class="form-group">
+                <button class="btn btn-primary" type="submit">检索</button>
+            </div>
+            <input type="hidden" name="uuid" value="uuid_dashboard_self">
+            <input type="hidden" name="preference" value="preference_dashboard_self">
+        </form>
+    </div>
+    <div class="container">
+        <h3>召回结果:</h3>
+        <div class="panel-group">
+            <ol>
+            {{range $key, $val := .L}}
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <a href="/?query={{$val._source.title}}&tids={{range $idx,$tid := $val._source.tags}}{{$tid}},{{end}}&type={{$.Form.Type}}&debug={{$.Form.Debug}}&uuid={{$.Form.UUID}}&preference={{$.Form.Preference}}" target="_blank"><h4><li>{{$val._source.title}}</li></h4></a>
+                </div>
+                <div class="panel-body">
+                    <p>
+                    id:
+                    {{if eq $val._type "article"}}
+                    <a href="http://ld.sogou.com/article?aid={{$val._id}}" target="_blank">{{$val._id}}</a>
+                    ,类型:
+                    <code>文章</code>
+                    {{else}}
+                    <a href="http://ld.sogou.com/question?qid={{$val._id}}" target="_blank">{{$val._id}}</a>
+                    ,类型:
+                    <code>
+                        {{if le $val._source.type 1.0}}
+                        问题
+                        {{else if le $val._source.type 2.0}}
+                        PK
+                        {{else if le $val._source.type 3.0}}
+                        投票
+                        {{end}}
+                    </code>
+                    {{end}}
+                    ,标签:
+                        {{range $idx, $tid := $val._source.tags}}
+                        {{if gt $idx 0}},{{end}}
+                        <a href="getbytid?tid={{$tid}}&type={{$.Form.Type}}&debug={{$.Form.Debug}}&uuid={{$.Form.UUID}}&preference={{$.Form.Preference}}" target="_blank">{{$tid}}:{{print $tid | id2name}}</a>
+                        {{end}}
+                    </p>
+                </div>
+            </div>
+            {{end}}
+        </ol>
+        </div>
+    </div>
+</body>
+{{template "layout/foot.html" .}}
