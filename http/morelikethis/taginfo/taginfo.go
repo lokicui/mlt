@@ -4,11 +4,17 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/astaxie/beego/logs"
+    "github.com/lokicui/mlt/http/morelikethis/segmenter"
+    "github.com/lokicui/mlt/http/morelikethis/trie"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+    UPDATE_INTERVAL_SECONDS int = 10
 )
 
 type TagInfo struct {
@@ -24,12 +30,14 @@ type TagInfo struct {
 var (
 	gTidToTagInfoMap   = &map[int]*TagInfo{}
 	gTNameToTagInfoMap = &map[string]*TagInfo{}
-	gLastUpdateTime    time.Time
+    gTrie              = trie.New() //不分词，以字为纬度建立的trie && 分词后以词为纬度建立trie
 	gMutex             = new(sync.Mutex)
+	gLastUpdateTime      time.Time
 )
 
 func Init(fname string) {
-	ticker := time.NewTicker(time.Second * 1)
+    ReloadConfigByModTime(fname)
+	ticker := time.NewTicker(time.Second * time.Duration(UPDATE_INTERVAL_SECONDS))
 	go func() {
 		for range ticker.C {
 			ReloadConfigByModTime(fname)
@@ -47,9 +55,41 @@ func GetTagInfoByName(tname string) (info *TagInfo, ok bool) {
 	return info, ok
 }
 
+func Segment(str string, seg bool) (words []string) {
+    if seg {
+        for item := range segmenter.GetSegmenter().Cut(str, false) {
+            text := item.Text()
+            pos := item.Pos()
+            if strings.HasPrefix(pos, "x") { //标点符号
+                continue
+            }
+            words = append(words, text)
+        }
+    } else {
+        for _, t := range []rune(str) {
+            words = append(words, string(t))
+        }
+    }
+    return words
+}
+
+func SearchTagInfoByName(tname string, seg bool) (infos []*TagInfo) {
+    keyPieces := Segment(tname, seg)
+    //longest search
+    for i := 0; i < len(keyPieces) - 1; i ++ {
+        v := gTrie.Search(keyPieces[i:len(keyPieces)])
+        if v != nil && v.GetValue() != nil {
+            info := v.GetValue().(*TagInfo)
+            infos = append(infos, info)
+        }
+    }
+    return infos
+}
+
 func ReloadConfigByModTime(fname string) {
 	tidToTagInfoMap := map[int]*TagInfo{}
 	tnameToTagInfoMap := map[string]*TagInfo{}
+    trie := trie.New()
 	finfo, err := os.Stat(fname)
 	if err != nil {
 		logs.Warn(fmt.Sprintf("fname=%s", fname), err)
@@ -97,6 +137,10 @@ func ReloadConfigByModTime(fname string) {
 			logs.Warn(pidstr, " pidstr is not digit")
 			continue
 		}
+        if status == 0 || status > 16 {
+            logs.Info(fmt.Sprintf("tid=%d,tname=%s,status=%d will not be imported!", tid, name, status))
+            continue
+        }
 		pname := items[8]
 		taginfo := &TagInfo{
 			Tid:    tid,
@@ -107,8 +151,13 @@ func ReloadConfigByModTime(fname string) {
 			Pid:    pid,
 			PName:  pname,
 		}
+        //对name和aliase分词建立trie
 		tidToTagInfoMap[tid] = taginfo
 		tnameToTagInfoMap[name] = taginfo
+        nameWords := Segment(name, false)
+        aliaseWords := Segment(aliase, false)
+        trie.Insert(nameWords, taginfo)
+        trie.Insert(aliaseWords, taginfo)
 	}
 	if err := scanner.Err(); err != nil {
 		logs.Warn(err)
@@ -116,6 +165,7 @@ func ReloadConfigByModTime(fname string) {
 	gMutex.Lock()
 	gTidToTagInfoMap = &tidToTagInfoMap
 	gTNameToTagInfoMap = &tnameToTagInfoMap
+    gTrie = trie
 	gMutex.Unlock()
 	logs.Debug(fmt.Sprintf("fname=%s", fname), " update finished")
 }

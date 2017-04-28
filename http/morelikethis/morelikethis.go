@@ -7,7 +7,6 @@ import (
 	"github.com/astaxie/beego/logs"
 	"github.com/lokicui/mlt/utils"
     "github.com/lokicui/mlt/http/morelikethis/taginfo"
-	"github.com/wangbin/jiebago/posseg"
 	"golang.org/x/net/context"
 	elastic "gopkg.in/olivere/elastic.v5"
 	"io/ioutil"
@@ -19,23 +18,16 @@ import (
 	"time"
 )
 
-var gSeg posseg.Segmenter
-var gESClient *elastic.Client = nil
+var (
+    gESClient *elastic.Client = nil
+)
 
 func init() {
-	err := gSeg.LoadDictionary("conf/dict.txt")
+    client, err := elastic.NewClient(elastic.SetURL("http://10.134.13.99:9200", "http://10.134.14.27:9200", "http://10.134.28.85:9200"))
 	if err != nil {
 		logs.Critical(err)
 	}
-	err = gSeg.LoadUserDictionary("conf/userdict.txt")
-	if err != nil {
-		logs.Critical(err)
-	}
-	gESClient, err = elastic.NewClient(elastic.SetURL("http://10.134.13.99:9200", "http://10.134.14.27:9200", "http://10.134.28.85:9200"))
-	if err != nil {
-		logs.Critical(err)
-	}
-    taginfo.Init("conf/db_taginfo.txt")
+    gESClient = client
 }
 
 func GetHitData(query, UUID string) (hintArray []string) {
@@ -292,7 +284,7 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		Query(boolQuery).
 		FetchSourceContext(fs).
 		Timeout("150ms").
-		Pretty(false).
+		Pretty(request.Pretty).
 		Do(context.TODO())
 	if err != nil {
 		logs.Debug(fmt.Printf("client.search err with:%s", err))
@@ -531,6 +523,11 @@ func moreLikeThisHandler(w http.ResponseWriter, r *http.Request, client *elastic
 }
 
 func GetMoreLikeThisResult(request *MltRequest) (result []interface{}) {
+    query := request.Query
+    hitTagInfos := taginfo.SearchTagInfoByName(query, false)
+    for i, hitTagInfo := range hitTagInfos {
+        logs.Debug(fmt.Sprintf("%d-hitTagName=%#v", i, hitTagInfo))
+    }
 	result, _, _ = MoreLikeThisQuery(request, gESClient)
 	return result
 }
@@ -576,7 +573,7 @@ func GetByTidResult(request *GetByTidRequest) (result []interface{}) {
 		Query(boolQuery).
 		FetchSourceContext(fs).
 		Timeout("150ms").
-		Pretty(false).
+		Pretty(request.Pretty).
 		Do(context.TODO())
 	if err != nil {
 		logs.Debug(fmt.Printf("client.search err with:%s", err))

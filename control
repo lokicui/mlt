@@ -27,6 +27,7 @@ function build() {
 #    COMMIT = "$commit"
 #)
 #EOF
+    #go build -gcflags "-N -l" -o $app
     go build -o $app
     sc=$?
     if [ $sc -ne 0 ];then

@@ -18,6 +18,7 @@ func GetTagNameById(idstr string) string {
 }
 
 func ConfigRoutes() {
+    taginfo.Init("conf/db_taginfo.txt")
     beego.AddFuncMap("id2name", GetTagNameById)
     beego.Handler("/more_like_this", MakeHandler(moreLikeThisHandler))
 }
