@@ -70,7 +70,7 @@ func DebugQueryDSL(q elastic.Query) {
 
 func getMustQueryWords(wordItems []utils.WordInfo) (words []string) {
 	for _, item := range wordItems {
-		if item.Weight > 1 || item.Term_NImps <= 10 { //非必留词 or 重要度太低的词
+		if item.Weight > 1 || (item.Term_NImps != 0 && item.Term_NImps <= 5) { //非必留词 or 重要度太低的词
 			continue
 		}
 		words = append(words, utils.SBC2DBC(item.Word))
@@ -94,10 +94,15 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	}
 	_ = time.Since(stime)
 	lcssMap := make(map[string]float32)
+    weightMap := make(map[string]float32)
+    for _, item := range qItems {
+        weightMap[utils.SBC2DBC(item.Word)] = float32(item.Term_NImps)
+    }
 	queryWords := getMustQueryWords(qItems)
 	if request.Debug {
 		fmt.Println(query)
 	}
+    TFIDFMap := make(map[string]float32)
 	for i, hintq := range hintArray {
 		if i == 5 {
 			break
@@ -108,7 +113,13 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		}
 		words := getMustQueryWords(items)
 		subStringArray := utils.GetLongestSubString(queryWords, words)
+        for _, w := range subStringArray {
+            TFIDFMap[w] += 1.0 * weightMap[w]
+        }
 		subSequenceArray := utils.GetLongestSubSequence(queryWords, words)
+        for _, w := range subSequenceArray {
+            TFIDFMap[w] += 1.0 * weightMap[w]
+        }
 		if request.Debug {
 			fmt.Println(hintq)
 			fmt.Println("\t", queryWords, words, subStringArray, subSequenceArray)
@@ -120,46 +131,6 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		}
 		lcssMap[lcss] += float32(award)
 	}
-	////query用jieba分词分一下
-	//queryWords := []string{}
-	//for item:= range gSeg.Cut(query, false) {
-	//    text := item.Text()
-	//    pos := item.Pos()
-	//    if strings.HasPrefix(pos, "x") { //标点符号
-	//        continue
-	//    }
-	//    queryWords = append(queryWords, text)
-	//}
-	////hint的前N条结果进行jieba分词
-	////计算query和hint前N条结果的最长公共子串
-	//lcssMap := make(map[string]float32)
-	//wordCnt := make(map[string]int)
-	//for i, hintq := range hintArray {
-	//    if i == 4 {
-	//        break
-	//    }
-	//    wds := []string{}
-	//    for item := range gSeg.Cut(hintq, false) {
-	//        text := item.Text()
-	//        pos := item.Pos()
-	//        if strings.HasPrefix(pos, "x") { //标点符号
-	//            continue
-	//        }
-	//        wds = append(wds, text)
-	//        wordCnt[text] += 1
-	//    }
-	//    lcssArray := GetLongestSubstring(queryWords, wds)
-	//    if (request.Debug) {
-	//        fmt.Println(queryWords, wds, lcssArray)
-	//    }
-	//    lcss := strings.Join(lcssArray, "")
-	//    award := 1.0
-	//    if i == 0 {
-	//        award = 1.5 //首条结果给与一定加权
-	//    }
-	//    lcssMap[lcss] += float32(award)
-	//}
-	//convert lcssMap -> lcss tuple
 	type Pair struct {
 		key   string
 		value float32
@@ -182,6 +153,9 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		for i, item := range sortedWords {
 			fmt.Printf("%d %#v %d\n", i, item.Word, item.Term_NImps)
 		}
+        for k, v := range TFIDFMap {
+            fmt.Printf("%s %.3f\n", k, v)
+        }
 	}
 	importantKwds := ""
 	if len(queryWords) > 5 {
@@ -197,7 +171,7 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		}
 	}
 
-	likeTextCntThreshold := 3
+	likeTextCntThreshold := 2
 	likeTextArray := append([]string{query}, hintArray...)
 	if len(likeTextArray) > likeTextCntThreshold {
 		likeTextArray = likeTextArray[:likeTextCntThreshold]
@@ -233,6 +207,7 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	filterMustQuery = filterMustQuery.Should(elastic.NewTermsQuery("type", doctypes...))
 	filterMustQuery = filterMustQuery.Should(elastic.NewTermQuery("_type", "article"))
 	filterBoolQuery = filterBoolQuery.Must(elastic.NewTermQuery("status", 2))
+	filterBoolQuery = filterBoolQuery.MustNot(elastic.NewTermQuery("origin", 13))
 	filterBoolQuery = filterBoolQuery.Must(filterMustQuery)
 
 	mltQuery := elastic.NewMoreLikeThisQuery().
@@ -259,16 +234,6 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		termQuery := elastic.NewTermQuery("tags", id).Boost(2.0)
 		boolQuery = boolQuery.Should(termQuery)
 	}
-	//命中实体词的认为实体词是核心词, 必须全命中在这里强制
-	//for item := range gSeg.Cut(query, false) {
-	//    text := item.Text()
-	//    pos := item.Pos()
-	//    if pos == "entity" {
-	//        matchQuery := elastic.NewMatchQuery("title", text).Operator("or")
-	//        boolQuery = boolQuery.Must(matchQuery)
-	//        break
-	//    }
-	//}
 	if request.Debug {
 		DebugQueryDSL(boolQuery)
 	}
@@ -556,6 +521,7 @@ func GetByTidResult(request *GetByTidRequest) (result []interface{}) {
 	boolQuery := elastic.NewBoolQuery()
 	boolQuery = boolQuery.Must(elastic.NewTermQuery("status", 2))
 	boolQuery = boolQuery.Must(elastic.NewTermQuery("tags", request.Tid))
+	boolQuery = boolQuery.MustNot(elastic.NewTermQuery("origin", 13))
 	boolQuery = boolQuery.Must(mustQuery)
 
 	if request.Debug {
