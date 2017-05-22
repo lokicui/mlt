@@ -29,8 +29,8 @@ func SegmentQuery(query string, useEntity bool) (words []WordInfo, err error) {
 		//"10.134.45.59:30001"
 	}
 	addr := addrs[rand.Intn(len(addrs))]
-	timeout := time.Duration(100)
-	socket, err := thrift.NewTSocketTimeout(addr, timeout*time.Millisecond) //50ms
+	timeout := time.Duration(50) //50ms
+	socket, err := thrift.NewTSocketTimeout(addr, timeout*time.Millisecond)
 	if err != nil {
 		fmt.Println("Error opening socket:", err)
 		return
@@ -40,11 +40,11 @@ func SegmentQuery(query string, useEntity bool) (words []WordInfo, err error) {
 	transportFactory = thrift.NewTFramedTransportFactory(transportFactory)
 	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
 	transport := transportFactory.GetTransport(socket)
-	defer transport.Close()
 	if err = transport.Open(); err != nil {
 		fmt.Println("Error opening socket:", err)
 		return
 	}
+	defer transport.Close()
 	client := wenwen_seg.NewSegServiceClientFactory(transport, protocolFactory)
 
 	for _, q := range splitQuery(query) {

@@ -15,8 +15,9 @@ func (this *HomeController) Get() {
     if err != nil {
         logs.Debug(err, retcode)
     } else {
-        result := morelikethis.GetMoreLikeThisResult(request)
+        result, keywordsMap := morelikethis.GetMoreLikeThisResult(request)
         this.Data["L"] = result
+        this.Data["Keywords"] = keywordsMap
     }
     //logs.Debug("req=", request)
     this.Data["Form"] = request
