@@ -10,7 +10,7 @@ cd $workspace
 module=server
 app=mlt-$module
 logdir=log
-ip="10.134.11.83"
+ip=`ifconfig eth0 | fgrep 'inet addr'  | awk '{print $2}' | awk -F ':' '{print $2}'`
 port=18080
 pidfile=var/app.pid
 logfile=$logdir/$app.log

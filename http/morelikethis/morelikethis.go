@@ -31,12 +31,13 @@ func init() {
 }
 
 func GetHitData(query, UUID string) (hintArray []string) {
+    query = strings.Replace(query, "\n", " ", -1)
 	url := fmt.Sprintf("http://hint.wenwen.sogou.com/web?uuid=%s&ie=utf8&callback=hintdata&src=wenwen.xgzs&query=%s",
 		UUID,
 		query)
 
     client := &http.Client{
-            Timeout: 50 * time.Millisecond,
+            Timeout: 100 * time.Millisecond,
         }
 	resp, err := client.Get(url)
 	if err != nil {
@@ -605,6 +606,6 @@ func MakeHandler(fn func(http.ResponseWriter, *http.Request, *elastic.Client)) h
 	//	logs.Critical(err)
 	//}
 	return func(w http.ResponseWriter, r *http.Request) {
-		moreLikeThisHandler(w, r, gESClient)
+		fn(w, r, gESClient)
 	}
 }
