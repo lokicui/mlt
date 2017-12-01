@@ -233,8 +233,36 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	//}
 	filterMustQuery := elastic.NewBoolQuery().MinimumNumberShouldMatch(1)
 	filterMustQuery = filterMustQuery.Should(elastic.NewTermsQuery("type", doctypes...))
-	filterMustQuery = filterMustQuery.Should(elastic.NewTermQuery("_type", "article"))
+
+    //过滤出定向抓取系统导入的数据
+    bo := elastic.NewBoolQuery()
+    bo = bo.Must(elastic.NewTermQuery("_type", "article"))
+    bo = bo.Must(elastic.NewTermQuery("refType", 2))
+    bo = bo.Must(elastic.NewTermQuery("listOpenType", 1))
+
+    bo1 := elastic.NewBoolQuery()
+    bo1 = bo1.Must(elastic.NewTermQuery("_type", "article"))
+    bo1 = bo1.MustNot(elastic.NewTermQuery("refType", 2))
+
+	//filterMustQuery = filterMustQuery.Should(elastic.NewTermQuery("_type", "article"))
+    filterMustQuery = filterMustQuery.Should(bo)
+    filterMustQuery = filterMustQuery.Should(bo1)
 	filterBoolQuery = filterBoolQuery.Must(elastic.NewTermQuery("status", 2))
+    //   origin       来源
+    //1       群问问个人
+    //2       QQ群
+    //3       主站团儿
+    //4       略懂社/主站试水(焦点问答)
+    //5       第一类开放平台
+    //6       群友圈(通过群友圈评论回答或帖子)
+    //100     略懂app
+    //101     哥伦布后台人工添加
+    //102     微信小程序
+    //103     哥伦布后台机器灌入
+    //104     搜索APP
+    //105     搜狗阅读
+    //106     头条阅读(demo)
+    //1000        darwin主站
 	filterBoolQuery = filterBoolQuery.MustNot(elastic.NewTermQuery("origin", 103))
 	filterBoolQuery = filterBoolQuery.Must(filterMustQuery)
 
@@ -267,7 +295,8 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	}
 	//fmt.Println(indextypes, doctypes)
 	//fs := elastic.NewFetchSourceContext(true).Include("title", "id")
-	fs := elastic.NewFetchSourceContext(true)
+	fs := elastic.NewFetchSourceContext(true).Exclude("answers")
+	//fs := elastic.NewFetchSourceContext(true)
 	res, err := client.Search().
 		Index("luedongshe").
 		Type(indextypes...).
@@ -472,7 +501,6 @@ func moreLikeThisHandler(w http.ResponseWriter, r *http.Request, client *elastic
     request, retcode, err := GenMltRequest(r.Form)
 	if err != nil {
 		retcode = 1
-		return
 	}
     result, keywordsMap, total, err := MoreLikeThisQuery(request, client)
 	if err != nil {
@@ -480,7 +508,6 @@ func moreLikeThisHandler(w http.ResponseWriter, r *http.Request, client *elastic
 		errmsg := fmt.Sprintf("more_like_this query failed with:%s", err)
 		logs.Debug(fmt.Printf("uuid:%s, %s", request.UUID, errmsg))
 		err = errors.New(errmsg)
-		return
 	}
     errmsg := ""
     if err != nil {
