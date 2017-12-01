@@ -26,27 +26,35 @@ func SegmentQuery(query string, useEntity bool) (words []WordInfo, err error) {
 		"10.134.45.64:30001",
 		"10.134.92.21:30001",
 		"10.134.100.115:30001",
-		//"10.134.45.59:30001"
+		//"10.134.45.59:30001",
 	}
-	addr := addrs[rand.Intn(len(addrs))]
-	timeout := time.Duration(50) //50ms
-	socket, err := thrift.NewTSocketTimeout(addr, timeout*time.Millisecond)
-	if err != nil {
-		fmt.Println("Error opening socket:", err)
-		return
-	}
-	var transportFactory thrift.TTransportFactory
-	transportFactory = thrift.NewTBufferedTransportFactory(8192)
-	transportFactory = thrift.NewTFramedTransportFactory(transportFactory)
-	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
-	transport := transportFactory.GetTransport(socket)
-	if err = transport.Open(); err != nil {
-		fmt.Println("Error opening socket:", err)
-		return
-	}
-	defer transport.Close()
-	client := wenwen_seg.NewSegServiceClientFactory(transport, protocolFactory)
-
+    var client *wenwen_seg.SegServiceClient = nil
+    baseidx := rand.Intn(len(addrs))
+    for i := 0; i < len(addrs)*2; i ++ {
+        baseidx = (baseidx+i) % len(addrs)
+        addr := addrs[baseidx]
+        timeout := time.Duration(50) //50ms
+        socket, err := thrift.NewTSocketTimeout(addr, timeout*time.Millisecond)
+        if err != nil {
+            fmt.Println("Error opening socket:", addr, err)
+            continue
+        }
+        var transportFactory thrift.TTransportFactory
+        transportFactory = thrift.NewTBufferedTransportFactory(8192)
+        transportFactory = thrift.NewTFramedTransportFactory(transportFactory)
+        protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
+        transport := transportFactory.GetTransport(socket)
+        if err = transport.Open(); err != nil {
+            fmt.Println("Error opening transport:", addr, err)
+            continue
+        }
+        defer transport.Close()
+        client = wenwen_seg.NewSegServiceClientFactory(transport, protocolFactory)
+        break
+    }
+    if client == nil {
+        return
+    }
 	for _, q := range splitQuery(query) {
 		wds, err := segment(q, useEntity, client)
 		//try 3 times
