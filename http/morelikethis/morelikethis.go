@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+    "github.com/astaxie/beego"
 	"github.com/astaxie/beego/logs"
 	"github.com/lokicui/mlt/utils"
     "github.com/lokicui/mlt/http/morelikethis/taginfo"
@@ -89,7 +90,9 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	UUID := request.UUID
 	stime := time.Now()
 	hintArray := GetHitData(query, UUID)
-	qItems, err := utils.SegmentQuery(query, false)
+    addrs := beego.AppConfig.Strings("SegmentServer")
+    //fmt.Println(beego.AppConfig.Strings("SegmentServer"))
+	qItems, err := utils.SegmentQuery(addrs, query, false)
 	if err != nil {
 		logs.Debug(fmt.Printf("uuid=%s,query=%s SegmentQuery failed with:%s", UUID, query, err))
 		return
@@ -115,7 +118,7 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		if i == 5 {
 			break
 		}
-		items, err := utils.SegmentQuery(hintq, false)
+		items, err := utils.SegmentQuery(addrs, hintq, false)
 		if err != nil {
 			continue
 		}
@@ -184,7 +187,7 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
         }
     }
 	importantKwds := strings.Join(importantKwdsArray, " ")
-
+    _ = importantKwds
 	//importantKwds := ""
 	//if len(queryWords) > 5 {
 	//	for _, item := range lcss2WeightArray {
@@ -237,8 +240,8 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
     //过滤出定向抓取系统导入的数据
     bo := elastic.NewBoolQuery()
     bo = bo.Must(elastic.NewTermQuery("_type", "article"))
-    bo = bo.Must(elastic.NewTermQuery("refType", 2))
-    bo = bo.Must(elastic.NewTermQuery("listOpenType", 1))
+    bo = bo.Must(elastic.NewTermQuery("refType", 2))        //新略懂app抓取系统导入的数据
+    bo = bo.Must(elastic.NewTermQuery("listOpenType", 1))  //中间页
 
     bo1 := elastic.NewBoolQuery()
     bo1 = bo1.Must(elastic.NewTermQuery("_type", "article"))
@@ -248,6 +251,12 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
     filterMustQuery = filterMustQuery.Should(bo)
     filterMustQuery = filterMustQuery.Should(bo1)
 	filterBoolQuery = filterBoolQuery.Must(elastic.NewTermQuery("status", 2))
+
+	//if len([]rune(importantKwds)) > 0 {
+	//	matchQuery := elastic.NewMatchQuery("title", importantKwds).Operator("or")
+	//	filterBoolQuery = filterBoolQuery.Must(matchQuery)
+	//}
+
     //   origin       来源
     //1       群问问个人
     //2       QQ群
@@ -267,7 +276,7 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	filterBoolQuery = filterBoolQuery.Must(filterMustQuery)
 
 	mltQuery := elastic.NewMoreLikeThisQuery().
-		Field("title").
+		Field("title", "simpleContent").  //为了兼容略懂article某些内容只有content(就是simpleContent)没有title
 		MinTermFreq(1).
 		MaxQueryTerms(20).
 		MinDocFreq(1).
@@ -278,10 +287,10 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		Filter(filterBoolQuery).
 		Must(mltQuery)
 
-	if len([]rune(importantKwds)) > 0 {
-		matchQuery := elastic.NewMatchQuery("title", importantKwds).Operator("or")
-		boolQuery = boolQuery.Must(matchQuery)
-	}
+	//if len([]rune(importantKwds)) > 0 {
+	//	matchQuery := elastic.NewMatchQuery("title", importantKwds).Operator("or")
+	//	boolQuery = boolQuery.Must(matchQuery)
+	//}
 
 	for i, id := range request.TidsList {
 		if i == 1 {

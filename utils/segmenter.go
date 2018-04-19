@@ -15,19 +15,7 @@ type WordInfo struct {
 	wenwen_seg.QueryTermInfo
 }
 
-func SegmentQuery(query string, useEntity bool) (words []WordInfo, err error) {
-	addrs := []string{
-		"10.134.104.53:30001",
-		"10.134.104.54:30001",
-		"10.134.104.53:30002",
-		"10.134.104.54:30002",
-		"10.134.45.60:30001",
-		//"10.134.45.63:30001",
-		"10.134.45.64:30001",
-		"10.134.92.21:30001",
-		"10.134.100.115:30001",
-		//"10.134.45.59:30001",
-	}
+func SegmentQuery(addrs []string, query string, useEntity bool) (words []WordInfo, err error) {
     var client *wenwen_seg.SegServiceClient = nil
     baseidx := rand.Intn(len(addrs))
     for i := 0; i < len(addrs)*2; i ++ {
