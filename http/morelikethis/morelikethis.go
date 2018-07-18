@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-    "github.com/astaxie/beego"
+	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/logs"
+	"github.com/lokicui/mlt/g"
+	"github.com/lokicui/mlt/http/morelikethis/taginfo"
 	"github.com/lokicui/mlt/utils"
-    "github.com/lokicui/mlt/http/morelikethis/taginfo"
 	"golang.org/x/net/context"
 	elastic "gopkg.in/olivere/elastic.v5"
 	"io/ioutil"
@@ -20,26 +21,30 @@ import (
 )
 
 var (
-    gESClient *elastic.Client = nil
+	gESClient *elastic.Client = nil
 )
 
 func init() {
-    client, err := elastic.NewClient(elastic.SetURL("http://10.134.13.99:9200", "http://10.134.14.27:9200", "http://10.134.28.85:9200"))
+	addrs := make([]string, 0, 16)
+	for _, addr := range strings.Split(*g.ESAddrs, ",") {
+		addrs = append(addrs, addr)
+	}
+	client, err := elastic.NewClient(elastic.SetURL(addrs...))
 	if err != nil {
 		logs.Critical(err)
 	}
-    gESClient = client
+	gESClient = client
 }
 
 func GetHitData(query, UUID string) (hintArray []string) {
-    query = strings.Replace(query, "\n", " ", -1)
+	query = strings.Replace(query, "\n", " ", -1)
 	url := fmt.Sprintf("http://hint.wenwen.sogou.com/web?uuid=%s&ie=utf8&callback=hintdata&src=wenwen.xgzs&query=%s",
 		UUID,
 		query)
 
-    client := &http.Client{
-            Timeout: 100 * time.Millisecond,
-        }
+	client := &http.Client{
+		Timeout: 100 * time.Millisecond,
+	}
 	resp, err := client.Get(url)
 	if err != nil {
 		logs.Warn(fmt.Printf("get hit data failed with:%s", err))
@@ -85,13 +90,13 @@ func getMustQueryWords(wordItems []utils.WordInfo) (words []string) {
 }
 
 func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []interface{}, TFIDFMap map[string]float32, total int64, err error) {
-    TFIDFMap = make(map[string]float32)
+	TFIDFMap = make(map[string]float32)
 	query := request.Query
 	UUID := request.UUID
 	stime := time.Now()
 	hintArray := GetHitData(query, UUID)
-    addrs := beego.AppConfig.Strings("SegmentServer")
-    //fmt.Println(beego.AppConfig.Strings("SegmentServer"))
+	addrs := beego.AppConfig.Strings("SegmentServer")
+	//fmt.Println(beego.AppConfig.Strings("SegmentServer"))
 	qItems, err := utils.SegmentQuery(addrs, query, false)
 	if err != nil {
 		logs.Debug(fmt.Printf("uuid=%s,query=%s SegmentQuery failed with:%s", UUID, query, err))
@@ -103,13 +108,13 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	}
 	_ = time.Since(stime)
 	lcssMap := make(map[string]float32)
-    weightMap := make(map[string]float32)
-    indexToTerm := make(map[int]string)
-    for i, item := range qItems {
-        word := utils.SBC2DBC(item.Word)
-        indexToTerm[i] = word
-        weightMap[word] = float32(item.Term_NImps)
-    }
+	weightMap := make(map[string]float32)
+	indexToTerm := make(map[int]string)
+	for i, item := range qItems {
+		word := utils.SBC2DBC(item.Word)
+		indexToTerm[i] = word
+		weightMap[word] = float32(item.Term_NImps)
+	}
 	queryWords := getMustQueryWords(qItems)
 	if request.Debug {
 		fmt.Println(query)
@@ -124,13 +129,13 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		}
 		words := getMustQueryWords(items)
 		subStringArray := utils.GetLongestSubString(queryWords, words)
-        for _, w := range subStringArray {
-            TFIDFMap[w] += 1.0 * weightMap[w]
-        }
+		for _, w := range subStringArray {
+			TFIDFMap[w] += 1.0 * weightMap[w]
+		}
 		subSequenceArray := utils.GetLongestSubSequence(queryWords, words)
-        for _, w := range subSequenceArray {
-            TFIDFMap[w] += 1.0 * weightMap[w]
-        }
+		for _, w := range subSequenceArray {
+			TFIDFMap[w] += 1.0 * weightMap[w]
+		}
 		if request.Debug {
 			fmt.Println(hintq)
 			fmt.Println("\t", queryWords, words, subStringArray, subSequenceArray)
@@ -154,10 +159,10 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		return lcss2WeightArray[i].value > lcss2WeightArray[j].value
 	})
 
-    term2WeightArray := make([]Pair, 0, len(TFIDFMap))
-    for k, v := range TFIDFMap {
-        term2WeightArray = append(term2WeightArray, Pair{key: k, value: v})
-    }
+	term2WeightArray := make([]Pair, 0, len(TFIDFMap))
+	for k, v := range TFIDFMap {
+		term2WeightArray = append(term2WeightArray, Pair{key: k, value: v})
+	}
 	sort.Slice(term2WeightArray, func(i, j int) bool {
 		return term2WeightArray[i].value > term2WeightArray[j].value
 	})
@@ -172,22 +177,22 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		for i, item := range sortedWords {
 			fmt.Printf("%d %#v %d\n", i, item.Word, item.Term_NImps)
 		}
-        for k, v := range TFIDFMap {
-            fmt.Printf("%s %.3f\n", k, v)
-        }
+		for k, v := range TFIDFMap {
+			fmt.Printf("%s %.3f\n", k, v)
+		}
 	}
-    importantKwdsArray := []string{}
-    for i, item := range term2WeightArray {
-        if i == 3 {
-            break
-        }
-        importantKwdsArray = append(importantKwdsArray, item.key)
-        if request.Debug {
-            fmt.Println(item.key, item.value)
-        }
-    }
+	importantKwdsArray := []string{}
+	for i, item := range term2WeightArray {
+		if i == 3 {
+			break
+		}
+		importantKwdsArray = append(importantKwdsArray, item.key)
+		if request.Debug {
+			fmt.Println(item.key, item.value)
+		}
+	}
 	importantKwds := strings.Join(importantKwdsArray, " ")
-    _ = importantKwds
+	_ = importantKwds
 	//importantKwds := ""
 	//if len(queryWords) > 5 {
 	//	for _, item := range lcss2WeightArray {
@@ -237,46 +242,52 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	filterMustQuery := elastic.NewBoolQuery().MinimumNumberShouldMatch(1)
 	filterMustQuery = filterMustQuery.Should(elastic.NewTermsQuery("type", doctypes...))
 
-    //过滤出定向抓取系统导入的数据
-    bo := elastic.NewBoolQuery()
-    bo = bo.Must(elastic.NewTermQuery("_type", "article"))
-    bo = bo.Must(elastic.NewTermQuery("refType", 2))        //新略懂app抓取系统导入的数据
-    bo = bo.Must(elastic.NewTermQuery("listOpenType", 1))  //中间页
+	//过滤出定向抓取系统导入的数据
+	bo := elastic.NewBoolQuery()
+	bo = bo.Must(elastic.NewTermQuery("_type", "article"))
+	bo = bo.Must(elastic.NewTermQuery("refType", 2))      //新略懂app抓取系统导入的数据
+	bo = bo.Must(elastic.NewTermQuery("listOpenType", 1)) //中间页
 
-    bo1 := elastic.NewBoolQuery()
-    bo1 = bo1.Must(elastic.NewTermQuery("_type", "article"))
-    bo1 = bo1.MustNot(elastic.NewTermQuery("refType", 2))
+	bo1 := elastic.NewBoolQuery()
+	bo1 = bo1.Must(elastic.NewTermQuery("_type", "article"))
+	bo1 = bo1.MustNot(elastic.NewTermQuery("refType", 2))
 
 	//filterMustQuery = filterMustQuery.Should(elastic.NewTermQuery("_type", "article"))
-    filterMustQuery = filterMustQuery.Should(bo)
-    filterMustQuery = filterMustQuery.Should(bo1)
-	filterBoolQuery = filterBoolQuery.Must(elastic.NewTermQuery("status", 2))
+	filterMustQuery = filterMustQuery.Should(bo)
+	filterMustQuery = filterMustQuery.Should(bo1)
 
+	filterBoolQuery = filterBoolQuery.Must(elastic.NewTermQuery("status", 2))
 	//if len([]rune(importantKwds)) > 0 {
 	//	matchQuery := elastic.NewMatchQuery("title", importantKwds).Operator("or")
 	//	filterBoolQuery = filterBoolQuery.Must(matchQuery)
 	//}
 
-    //   origin       来源
-    //1       群问问个人
-    //2       QQ群
-    //3       主站团儿
-    //4       略懂社/主站试水(焦点问答)
-    //5       第一类开放平台
-    //6       群友圈(通过群友圈评论回答或帖子)
-    //100     略懂app
-    //101     哥伦布后台人工添加
-    //102     微信小程序
-    //103     哥伦布后台机器灌入
-    //104     搜索APP
-    //105     搜狗阅读
-    //106     头条阅读(demo)
-    //1000        darwin主站
+	//   origin       来源
+	//1       群问问个人
+	//2       QQ群
+	//3       主站团儿
+	//4       略懂社/主站试水(焦点问答)
+	//5       第一类开放平台
+	//6       群友圈(通过群友圈评论回答或帖子)
+	//100     略懂app
+	//101     哥伦布后台人工添加
+	//102     微信小程序
+	//103     哥伦布后台机器灌入
+	//104     搜索APP
+	//105     搜狗阅读
+	//106     头条阅读(demo)
+	//1000        darwin主站
 	filterBoolQuery = filterBoolQuery.MustNot(elastic.NewTermQuery("origin", 103))
+	tids := taginfo.GetTagIDsByTF(2) // == 2 邀请码的数据过滤掉
+	s := make([]interface{}, len(tids))
+	for i, v := range tids {
+		s[i] = v
+	}
+	filterBoolQuery = filterBoolQuery.MustNot(elastic.NewTermsQuery("tags", s...))
 	filterBoolQuery = filterBoolQuery.Must(filterMustQuery)
 
 	mltQuery := elastic.NewMoreLikeThisQuery().
-		Field("title", "simpleContent").  //为了兼容略懂article某些内容只有content(就是simpleContent)没有title
+		Field("title", "simpleContent"). //为了兼容略懂article某些内容只有content(就是simpleContent)没有title
 		MinTermFreq(1).
 		MaxQueryTerms(20).
 		MinDocFreq(1).
@@ -410,7 +421,7 @@ func GenGetByTidRequest(m url.Values) (request *GetByTidRequest, retcode int, er
 		return
 	}
 	if value, ok := m["tid"]; ok && len(value) > 0 {
-		request.Tid= value[0]
+		request.Tid = value[0]
 	} else {
 		retcode = 1
 		errmsg := fmt.Sprintf("argument error failed with:%s", "no Tid arg")
@@ -507,50 +518,50 @@ func GenMltRequest(m url.Values) (request *MltRequest, retcode int, err error) {
 func moreLikeThisHandler(w http.ResponseWriter, r *http.Request, client *elastic.Client) {
 	stime := time.Now()
 	r.ParseForm()
-    request, retcode, err := GenMltRequest(r.Form)
+	request, retcode, err := GenMltRequest(r.Form)
 	if err != nil {
 		retcode = 1
 	}
-    result, keywordsMap, total, err := MoreLikeThisQuery(request, client)
+	result, keywordsMap, total, err := MoreLikeThisQuery(request, client)
 	if err != nil {
 		retcode = 3
 		errmsg := fmt.Sprintf("more_like_this query failed with:%s", err)
 		logs.Debug(fmt.Printf("uuid:%s, %s", request.UUID, errmsg))
 		err = errors.New(errmsg)
 	}
-    errmsg := ""
-    if err != nil {
-        errmsg = err.Error()
-    }
-    took := float64(time.Since(stime)) / float64(time.Second)
-    vmap := make(map[string]interface{})
-    vmap["rawreq"] = r.URL
-    vmap["retcode"] = retcode
-    vmap["request"] = request
-    vmap["took"] = took
-    vmap["errmsg"] = errmsg
-    vmap["data"] = result
-    vmap["total"] = total
-    vmap["keywords"] = keywordsMap
-    vmap["retnum"] = len(result)
-    vjson := []byte{'{', '}'}
-    if request.Pretty {
-        vjson, _ = json.MarshalIndent(vmap, "", "    ")
-    } else {
-        vjson, _ = json.Marshal(vmap)
-    }
-    fmt.Fprintf(w, "%s", vjson)
-    delete(vmap, "data")
-    logjson, _ := json.Marshal(vmap)
-    logs.Debug(string(logjson))
+	errmsg := ""
+	if err != nil {
+		errmsg = err.Error()
+	}
+	took := float64(time.Since(stime)) / float64(time.Second)
+	vmap := make(map[string]interface{})
+	vmap["rawreq"] = r.URL
+	vmap["retcode"] = retcode
+	vmap["request"] = request
+	vmap["took"] = took
+	vmap["errmsg"] = errmsg
+	vmap["data"] = result
+	vmap["total"] = total
+	vmap["keywords"] = keywordsMap
+	vmap["retnum"] = len(result)
+	vjson := []byte{'{', '}'}
+	if request.Pretty {
+		vjson, _ = json.MarshalIndent(vmap, "", "    ")
+	} else {
+		vjson, _ = json.Marshal(vmap)
+	}
+	fmt.Fprintf(w, "%s", vjson)
+	delete(vmap, "data")
+	logjson, _ := json.Marshal(vmap)
+	logs.Debug(string(logjson))
 }
 
 func GetMoreLikeThisResult(request *MltRequest) (result []interface{}, keywordsMap map[string]float32) {
-    query := request.Query
-    hitTagInfos := taginfo.SearchTagInfoByName(query, false)
-    for i, hitTagInfo := range hitTagInfos {
-        logs.Debug(fmt.Sprintf("%d-hitTagName=%#v", i, hitTagInfo))
-    }
+	query := request.Query
+	hitTagInfos := taginfo.SearchTagInfoByName(query, false)
+	for i, hitTagInfo := range hitTagInfos {
+		logs.Debug(fmt.Sprintf("%d-hitTagName=%#v", i, hitTagInfo))
+	}
 	result, keywordsMap, _, _ = MoreLikeThisQuery(request, gESClient)
 	return result, keywordsMap
 }
@@ -608,7 +619,7 @@ func GetByTidResult(request *GetByTidRequest) (result []interface{}) {
 		return
 	}
 	//res.TotalHits()
-    total := res.TotalHits()
+	total := res.TotalHits()
 	//if res.Hits.TotalHits == 0
 	if total == 0 {
 		logs.Debug("expected SearchResult.Hits.TotalHits > %d; got 0")
