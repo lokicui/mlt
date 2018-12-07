@@ -46,7 +46,7 @@ func Init(fname string) {
 	for _, addr := range strings.Split(*g.ESAddrs, ",") {
 		addrs = append(addrs, addr)
 	}
-	client, err := elastic.NewClient(elastic.SetURL(addrs...))
+	client, err := elastic.NewClient(elastic.SetURL(addrs...), elastic.SetBasicAuth(*g.ESUser, *g.ESPasswd), elastic.SetSniff(false))
 	if err != nil {
 		logs.Critical(err)
 	}
