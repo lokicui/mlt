@@ -317,6 +317,8 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 	//fs := elastic.NewFetchSourceContext(true).Include("title", "id")
 	fs := elastic.NewFetchSourceContext(true).Exclude("answers")
 	//fs := elastic.NewFetchSourceContext(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 160*time.Millisecond)
+	defer cancel()
 	res, err := client.Search().
 		Index("luedongshe").
 		Type(indextypes...).
@@ -327,7 +329,7 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		FetchSourceContext(fs).
 		Timeout("150ms").
 		Pretty(request.Pretty).
-		Do(context.TODO())
+		Do(ctx)
 	if err != nil {
 		logs.Debug(fmt.Printf("client.search err with:%s", err))
 		return
@@ -599,6 +601,8 @@ func GetByTidResult(request *GetByTidRequest) (result []interface{}) {
 	//fmt.Println(indextypes, doctypes)
 	//fs := elastic.NewFetchSourceContext(true).Include("title", "id")
 	fs := elastic.NewFetchSourceContext(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 160*time.Millisecond)
+	defer cancel()
 	res, err := gESClient.Search().
 		Index("luedongshe").
 		Type(indextypes...).
@@ -609,7 +613,7 @@ func GetByTidResult(request *GetByTidRequest) (result []interface{}) {
 		FetchSourceContext(fs).
 		Timeout("150ms").
 		Pretty(request.Pretty).
-		Do(context.TODO())
+		Do(ctx)
 	if err != nil {
 		logs.Debug(fmt.Printf("client.search err with:%s", err))
 		return
