@@ -327,7 +327,7 @@ func MoreLikeThisQuery(request *MltRequest, client *elastic.Client) (result []in
 		Preference(request.Preference).
 		Query(boolQuery).
 		FetchSourceContext(fs).
-		Timeout("150ms").
+		Timeout("100ms").
 		Pretty(request.Pretty).
 		Do(ctx)
 	if err != nil {

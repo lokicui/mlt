@@ -43,7 +43,7 @@ var (
 
 func Init(fname string) {
 	addrs := make([]string, 0, 16)
-	for _, addr := range strings.Split(*g.ESAddrs, ",") {
+	for _, addr := range strings.Split(*g.ESTagInfoAddrs, ",") {
 		addrs = append(addrs, addr)
 	}
 	client, err := elastic.NewClient(elastic.SetURL(addrs...), elastic.SetBasicAuth(*g.ESUser, *g.ESPasswd), elastic.SetSniff(false))
