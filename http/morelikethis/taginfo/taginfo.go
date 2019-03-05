@@ -117,7 +117,7 @@ func ReloadConfigFromES(client *elastic.Client) {
 	trie := trie.New()
 	filterBoolQuery := elastic.NewBoolQuery()
 	filterBoolQuery = filterBoolQuery.Must(elastic.NewTermQuery("show_status", 1))
-	svc := client.Scroll("taginfo_20180503").Query(filterBoolQuery)
+	svc := client.Scroll("taginfo").Query(filterBoolQuery)
 	for {
 		searchResult, err := svc.Do(context.TODO())
 		if err == io.EOF { // or err == io.EOF
